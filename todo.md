@@ -1,0 +1,9 @@
+- È Luma l'unica opzione utilizzabile -> Guardare in maniera leggera ad altre opzioni
+- C'è un API per il servizio usato (nel caso di Luma, no)
+- Perchè il visore non funziona???? -> Augello
+- Come ci dobbiamo collegare a Unity? -> Da vedere DOPO il punto precedente
+- Studio di Unity Pomposo e pompato:
+	- API e Creative Core, Creative Core UI -> Simone
+	- Player, Importazione e sistemazione degli oggetti -> Pierfrancesco
+- Upscaling degli oggetti -> Upscaling delle texture
+- 
