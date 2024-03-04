@@ -13,4 +13,17 @@ SUBSYSTEM="usb", ATTR{idVendor}=="2833", ATTR{idProduct}=="0186", MODE="0660" gr
 
 - It is necessary to kill and restart the adb server a few times using the command ```adb kill-server``` and ```adb start-server``` respectively and try to check if the authorization is complete using the command ```abd devices```
 
-##
+### Using a Wireless Connection
+After allowing the wireless connection using a MacOS device, simply run ```adb connect <ip-address>:<port>```
+___
+## MacOS
+### With USB Cable
+
+- Open **Meta Quest Developer Hub**, after actving bluetooth, add a new device by pressing the ```Setup new device``` button.
+- On the next screen, select the model to connect, choose the device from the list and wait for a few seconds.
+- After receiving a positive confirmation of the successful connection, connect the Oculus using a USB cable.
+- Then, wear the headset and grant ADB permission from it.
+
+### Using a wireless connection
+
+- After configuring device, enable the Wi-Fi connection from **Meta Quest Developer Hub**.
