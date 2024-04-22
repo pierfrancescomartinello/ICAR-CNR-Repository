@@ -13,6 +13,7 @@ Original file is located at
 !git clone https://github.com/openai/shap-e.git; cd shap-e/; pip -q install -e .
 """
 
+# Model dependent imports
 import torch
 
 from shap_e.diffusion.sample import sample_latents
@@ -21,6 +22,7 @@ from shap_e.models.download import load_model, load_config
 from shap_e.util.notebooks import create_pan_cameras, decode_latent_images, decode_latent_mesh
 from diffusers.utils import export_to_gif
 
+# Other imports
 import os
 import threading
 import time
@@ -29,63 +31,141 @@ from typing import List
 import shutil
 import glob
 
+# Server dependent imports
 from flask import Flask, request, jsonify, Response, send_from_directory
 from pyngrok import ngrok, conf
 
-# Setup stuff for shap-e
+print("Imports are successful!")
 
+
+
+# Setup stuff for shap-e
+# Check if we are working with GPU or CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# print(torch.cuda.is_available())
+
+# Loading the transmitter, LLM and Diffuser
 xm = load_model('transmitter', device=device)
 model = load_model('text300M', device=device)
 diffusion = diffusion_from_config(load_config('diffusion'))
-size = 128
-cameras = create_pan_cameras(size, device)
-render_mode = 'nerf'
+
+print("Model has been loaded correctly!")
 
 
 
+# Variables for model settings
+size = 128  # Size of the created models
+cameras = create_pan_cameras(size, device) # Useful to output gifs and objects files
+render_mode = 'nerf' # Render Mode, stf is the default one, we are using NeRF
 guidance_scale = 15.0
 
 def cache_purge():
+    """
+    Purges the contents of the cache directory.
+
+    This function deletes all files and directories within the cache directory
+    and recreates the cache directory if it doesn't exist.
+
+    Note:
+        The cache directory path is determined relative to the current working directory.
+
+    Raises:
+        OSError: If there's an issue with accessing or deleting the cache directory.
+
+    """
     global cache_dir
-    cache_dir = os.getcwd() +"/cache/"
+    # Set the cache directory path relative to the current working directory
+    cache_dir = os.getcwd() + "/cache/"
+
+    # Check if the cache directory exists
     if os.path.exists(cache_dir):
+        # If it exists, remove it and all its contents
         shutil.rmtree(cache_dir)
 
+    # Recreate the cache directory
     os.mkdir(cache_dir)
 
 
 
 def cache_update(models, query, cli_id):
-    # if the cache folder exists, purge it.
+    """
+    Update the cache with images and meshes generated from the provided models.
+
+    Args:
+        models (list): List of model data to be processed.
+        query (str): Query string associated with the cached data.
+        cli_id (str): Client ID used to identify the client.
+
+    Returns:
+        None
+
+    This function updates the cache with images and meshes generated from the provided models.
+    It first purges the cache folder associated with the given client ID and query if it exists,
+    then generates GIFs and meshes from the models and saves them in the cache directory.
+
+    Note:
+        The cache directory structure is maintained as follows:
+        cache_dir/
+            cli_id/
+                query/
+                    gifs/
+                    meshes/
+
+    """
+    # Check if the cache folder exists for the given client ID and query, if so, purge it
     if os.path.isdir(cache_dir + f"{cli_id}/{query}/"):
         shutil.rmtree(cache_dir + f"{cli_id}/{query}/")
     os.mkdir(cache_dir + f"{cli_id}/{query}/")
 
-    # return the output of the model as a series of images -> useful for the gif function.
-    gif_files = [decode_latent_images(xm, i, cameras, rendering_mode = render_mode) for i in models]
+    # Create directories for storing GIFs and meshes
+    gif_files = [decode_latent_images(xm, i, cameras, rendering_mode=render_mode) for i in models]
     os.mkdir(cache_dir + f"{cli_id}/{query}/gifs/")
     os.mkdir(cache_dir + f"{cli_id}/{query}/meshes/")
 
+    # Generate GIFs and meshes for each model and save them to the cache directory
     for index, img in enumerate(models):
+        # Generate GIF from model data
 
-        export_to_gif(gif_files[index],f"{cache_dir}{cli_id}/{query}/gifs/{index}_model.gif")
+        export_to_gif(gif_files[index], f"{cache_dir}{cli_id}/{query}/gifs/{index}_model.gif")
 
+        # Generate mesh from model data
         t = decode_latent_mesh(xm, img).tri_mesh()
         with open(f'{cache_dir}{cli_id}/{query}/meshes/{index}_mesh.obj', 'w') as f:
             t.write_obj(f)
 
+    # Get the list of generated GIF files
     gifs = glob.glob(f"{cache_dir}{cli_id}/{query}/gifs/*.gif")
 
+    # Compress GIFs into a ZIP file
     shutil.make_archive(f"{cache_dir}{cli_id}/{query}/output", "zip", f"{cache_dir}{cli_id}/{query}/gifs/")
 
+    # Remove the temporary GIFs directory
     shutil.rmtree(f"{cache_dir}{cli_id}/{query}/gifs/")
 
 
 
 
-def query_inference(prompt:str, tentatives:int):
+def query_to_model(prompt:str, tentatives:int):
+    """
+    Perform inference using a text prompt to generate images.
+
+    Args:
+        prompt (str): Text prompt used for generating images.
+        tentatives (int): Number of attempts to generate images.
+
+    Returns:
+        list: List of images generated based on the provided prompt.
+
+    This function utilizes a pre-trained model to generate images based on a given text prompt.
+    It generates a specified number of images by sampling from the latent space of the model
+    while conditioning on the provided prompt.
+
+    Note:
+        The generated images represent different attempts to interpret the given prompt.
+        The quality and diversity of generated images may vary based on the complexity
+        and specificity of the prompt, as well as the parameters used in the sampling process.
+
+    """
+
     images = sample_latents(
         batch_size=tentatives,
         model=model,
@@ -112,7 +192,7 @@ if os.path.isdir(cache_dir) and len(os.listdir(cache_dir)) != 0:
     shutil.rmtree(cache_dir)
     os.mkdir(cache_dir)
 
-
+# The Authentication Token is given to Ngrok
 conf.get_default().authtoken = "2es5nf06I3UZtEobPxyiIkF8YEK_7P8HwXtAaTnFHo6GRLgtC"
 
 # Open a ngrok tunnel to the HTTP server
@@ -121,75 +201,140 @@ public_url = ngrok.connect(port).public_url
 # Update any base URLs to use the public ngrok URL
 app.config["BASE_URL"] = public_url
 
-
+# Clients data structure allows us to define who is really authenticated to query the server
 clients = dict()
 cache_purge()
 print(f"{public_url}")
 
-#___________________________________________
-# Debug Method - Unimportant
 @app.route("/", methods=["GET"])
 def home():
+    """
+    Debug method for handling GET requests to the home route.
+
+    Returns:
+        tuple: A tuple containing an empty string and the HTTP status code 200.
+
+    This method is used as a simple debug endpoint to handle GET requests to the root route ("/").
+    It returns an empty response with an HTTP status code of 200 to indicate a successful request.
+    This method may be used during development and debugging but is otherwise unimportant for application functionality.
+
+    """
     return "", 200
+
 
 
 @app.route("/auth", methods=["POST"])
 def authorization():
-    # Authorize a new client. Accessible using <url>/auth?cli_id=<id>
+    """
+    Authorize a new client for accessing the application.
+
+    Returns:
+        tuple: A tuple containing an empty string and the appropriate HTTP status code.
+
+    This endpoint authorizes a new client for accessing the application.
+    It expects a POST request with a query parameter 'cli_id' containing the client ID.
+    If the client ID is already authorized, it returns a 401 (Unauthorized) status code.
+    If the client ID is new, it adds it to the list of authorized clients, creates a cache directory
+    for the client, and returns a 200 (OK) status code.
+
+    """
+    # Extract client ID from request arguments
     cli_id = request.args["cli_id"]
+
+    # Check if client ID is already authorized
     if cli_id in clients:
-        # Already authorized
-        return '', 401 # Unauthorized
+        # Client already authorized, return unauthorized status code
+        return '', 401  # Unauthorized
     else:
+        # Authorize the client, add to authorized clients list, create cache directory
         clients[cli_id] = time.time()
         os.mkdir(cache_dir + f"/{cli_id}/")
-        return '', 200 # OK
+        return '', 200  # OK
 
-@app.route("/query", methods = ["GET"])
+
+@app.route("/query", methods=["GET"])
 def pictures_exchange():
+    """
+    Endpoint for exchanging pictures based on a client's query.
+
+    Returns:
+        tuple: A tuple containing a file and the appropriate HTTP status code.
+
+    This endpoint handles GET requests to exchange pictures based on a client's query.
+    It expects query parameters 'cli_id', 'query', and 'tentatives' in the request.
+    If the client is not authorized, it returns a 401 (Unauthorized) status code.
+    It then processes the query to generate models and updates the cache.
+    Finally, it returns a ZIP file containing the output images to the client.
+
+    """
+    # Extract client ID from request arguments
     cli_id = request.args["cli_id"]
+
+    # Check if client is authorized
     if cli_id not in clients:
-        return '', 401 # Unauthorized
+        return '', 401  # Unauthorized
+
+    # Parse query parameters
     query = parse.unquote(request.args["query"])
-    print(query)
     tentatives = int(parse.unquote(request.args["tentatives"]))
-    # Ask for query
-    models = query_inference(query, tentatives)
+
+    # Generate models based on the query
+    models = query_to_model(query, tentatives)
+
+    # Update cache with generated models
     cache_update(models, query, cli_id)
 
-    return send_from_directory(f"{cache_dir}/{cli_id}/{query}/","output.zip")
+    # Return the output images as a ZIP file to the client
+    return send_from_directory(f"{cache_dir}/{cli_id}/{query}/", "output.zip")
 
 
 @app.route("/download", methods=["GET"])
 def download():
-    print("Download?")
-    cli_id = request.args["cli_id"]
-    if cli_id not in clients:
-        return '', 401 #
-    input(cli_id in clients)
-    query = parse.unquote(request.args["query"])
-    print(query)
-    obj_num = int(parse.unquote(request.args["object"]))
-    print(obj_num)
 
+    """
+    Endpoint for downloading mesh files associated with a client's query.
+
+    Returns:
+        tuple: A tuple containing file data and the appropriate HTTP status code.
+
+    This endpoint handles GET requests for downloading mesh files associated with a client's query.
+    It expects query parameters 'cli_id', 'query', and 'object' specifying the client ID,
+    query string, and object number respectively.
+    If the client is not authorized, it returns a 401 (Unauthorized) status code.
+    If the requested mesh file exists, it reads the file data and returns it as a response
+    with appropriate headers for downloading.
+    If the requested mesh file does not exist, it returns a 418 (I'm a teapot) status code.
+
+    """
+    # Extract client ID from request arguments
+    cli_id = request.args["cli_id"]
+
+    # Check if client is authorized
+    if cli_id not in clients:
+        return '', 401  # Unauthorized
+
+    # Parse query parameters
+    query = parse.unquote(request.args["query"])
+    obj_num = int(parse.unquote(request.args["object"]))
+
+    # Check if the requested mesh file exists
     if os.path.exists(f'{cache_dir}{cli_id}/{query}/meshes/{obj_num}_mesh.obj'):
+        # Read the file data
         file_data = ""
-        with open(f'{cache_dir}{cli_id}/{query}/meshes/{obj_num}_mesh.obj' , "rb") as f:
+        with open(f'{cache_dir}{cli_id}/{query}/meshes/{obj_num}_mesh.obj', "rb") as f:
             file_data = f.read()
 
-        response = Response(file_data, mimetype = "text/plain")
+        # Create a response with the file data and appropriate headers for downloading
+        response = Response(file_data, mimetype="text/plain")
         response.headers.set('Content-Disposition', 'attachment', filename=f"{obj_num}_mesh.obj")
 
         return response
 
-
-        # return send_from_directory(f"{cache_dir}/{cli_id}/{query}/","output.zip")
-        # return send_from_directory(f'{cache_dir}{cli_id}/{query}/meshes/{obj_num}_mesh.ply', f"{query}.ply", as_attachment = True)
     else:
-        print("WAA")
-        return "The resource does not exists", 418
+        # If the requested mesh file does not exist, return a 418 status code (I'm a teapot)
+        return "The resource does not exist", 418
 
 app.run(debug = False, threaded=False, use_reloader = False)
 
-# Use Threads?
-#threading.Thread(target=app.run, kwargs={"use_reloader": False}).start()
+# Do you want to use threads? Use the following line of code instead of the previous
+# threading.Thread(target=app.run, kwargs={"use_reloader": False}).start()
